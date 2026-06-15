@@ -1,13 +1,9 @@
 import matter from "gray-matter"
-import { JournalEntry, emptyJournalEntry, Habit } from "./types"
+import { JournalEntry, emptyJournalEntry } from "./types"
 import { getWeekString, getMonthString, getQuarterString } from "@/lib/utils/date"
 
-export function parseJournalMarkdown(
-  raw: string,
-  fallbackDate: string
-): JournalEntry {
+export function parseJournalMarkdown(raw: string, fallbackDate: string): JournalEntry {
   const { data, content } = matter(raw)
-
   const date = data.date || fallbackDate
   const week = data.week || getWeekString(new Date(date))
   const month = data.month || getMonthString(new Date(date))
@@ -15,44 +11,53 @@ export function parseJournalMarkdown(
 
   const entry = emptyJournalEntry(date, week, month, quarter)
 
-  // Parse todos (merged priorities + tasks)
+  // Morning intention
+  if (data.morning_intention) {
+    entry.morningIntention = data.morning_intention
+  }
+
+  // Todos
   if (Array.isArray(data.todos)) {
-    entry.todos = data.todos.map(
-      (t: { text?: string; done?: boolean }) => ({
-        text: t.text || "",
-        done: t.done || false,
+    entry.todos = data.todos.map((t: { text?: string; done?: boolean }) => ({
+      text: t.text || "",
+      done: t.done || false,
+    }))
+  } else {
+    // Backward compat
+    const oldP = Array.isArray(data.priorities)
+      ? data.priorities.map((p: { text?: string; done?: boolean }) => ({ text: p.text || "", done: p.done || false }))
+      : []
+    const oldT = Array.isArray(data.tasks)
+      ? data.tasks.map((t: { text?: string; done?: boolean }) => ({ text: t.text || "", done: t.done || false }))
+      : []
+    entry.todos = [...oldP, ...oldT].filter((x) => x.text)
+    while (entry.todos.length < 3) entry.todos.push({ text: "", done: false })
+  }
+
+  // Quick capture
+  if (Array.isArray(data.quick_capture)) entry.quickCapture = data.quick_capture
+
+  // Life story
+  if (data.life_story) entry.lifeStory = data.life_story
+
+  // Free writing — extract from body (only the 心情日记 section)
+  entry.freeWriting = extractSection(content, "💭 心情日记")
+
+  // Gratitude
+  if (Array.isArray(data.gratitude)) {
+    entry.gratitude = data.gratitude.map(
+      (g: { content?: string; person?: string; qualities?: string }) => ({
+        content: g.content || "",
+        person: g.person || "",
+        qualities: g.qualities || "",
       })
     )
-  } else {
-    // Backward compat: merge old priorities and tasks
-    const oldPriorities = Array.isArray(data.priorities)
-      ? data.priorities.map((p: { text?: string; done?: boolean }) => ({
-          text: p.text || "",
-          done: p.done || false,
-        }))
-      : []
-    const oldTasks = Array.isArray(data.tasks)
-      ? data.tasks.map((t: { text?: string; done?: boolean }) => ({
-          text: t.text || "",
-          done: t.done || false,
-        }))
-      : []
-    entry.todos = [...oldPriorities, ...oldTasks].filter((t) => t.text)
-    // Pad to 3 items
-    while (entry.todos.length < 3) {
-      entry.todos.push({ text: "", done: false })
-    }
   }
 
-  // Parse quick capture
-  if (Array.isArray(data.quick_capture)) {
-    entry.quickCapture = data.quick_capture
-  }
+  // Decision reflection
+  if (data.decision_reflection) entry.decisionReflection = data.decision_reflection
 
-  // Extract only the 自由书写 section from body (fix garbled text)
-  entry.freeWriting = extractFreeWriting(content)
-
-  // Parse evening review from frontmatter
+  // Evening review
   if (data.review) {
     entry.eveningReview = {
       mood: data.review.mood || "",
@@ -68,7 +73,7 @@ export function parseJournalMarkdown(
     }
   }
 
-  // Parse tomorrow handoff
+  // Handoff
   if (data.handoff) {
     entry.tomorrowHandoff = {
       primary: data.handoff.primary || "",
@@ -77,7 +82,7 @@ export function parseJournalMarkdown(
     }
   }
 
-  // Parse habits (new format) or fall back to old maintenance
+  // Habits
   if (Array.isArray(data.habits)) {
     entry.habits = data.habits.map(
       (h: { key?: string; label?: string; done?: boolean; category?: string }) => ({
@@ -88,17 +93,11 @@ export function parseJournalMarkdown(
       })
     )
   } else if (data.maintenance) {
-    // Backward compat
-    const defaultHabits = emptyJournalEntry(date, week, month, quarter).habits
     for (const habit of entry.habits) {
-      const oldKey = habit.key
-      if (oldKey in data.maintenance) {
-        habit.done = !!data.maintenance[oldKey]
-      }
+      if (habit.key in data.maintenance) habit.done = !!data.maintenance[habit.key]
     }
   }
 
-  // Scalar fields
   entry.energy = data.energy ?? null
   entry.reading = data.reading || ""
   entry.meditation = data.meditation || false
@@ -107,30 +106,22 @@ export function parseJournalMarkdown(
   return entry
 }
 
-/**
- * Extract only the 自由书写 section from the markdown body.
- * Before: entire body was used as freeWriting (causing duplicates and garbled HTML)
- * Now: only content between "### 📕自由书写" and the next "###" heading.
- */
-function extractFreeWriting(body: string): string {
+function extractSection(body: string, sectionName: string): string {
   if (!body) return ""
-
-  // Find the free writing section
-  const startMarker = "### 📕自由书写"
+  const startMarker = `### ${sectionName}`
   const startIndex = body.indexOf(startMarker)
-  if (startIndex === -1) return body.trim() // fallback: whole body is free writing
-
-  const afterStart = body.substring(startIndex + startMarker.length)
-
-  // Find the next ### heading
-  const nextHeading = afterStart.search(/\n###\s/)
-  if (nextHeading === -1) {
-    // No next heading - rest is free writing
-    return afterStart.trim()
+  if (startIndex === -1) {
+    // fallback: look for old "📕自由书写" marker
+    const oldMarker = "### 📕自由书写"
+    const oldIdx = body.indexOf(oldMarker)
+    if (oldIdx === -1) return body.trim()
+    const after = body.substring(oldIdx + oldMarker.length)
+    const nextHeading = after.search(/\n###\s/)
+    return nextHeading === -1 ? after.trim() : after.substring(0, nextHeading).trim()
   }
-
-  const section = afterStart.substring(0, nextHeading).trim()
-  // Strip HTML tags to get plain text
+  const after = body.substring(startIndex + startMarker.length)
+  const nextHeading = after.search(/\n###\s/)
+  const section = nextHeading === -1 ? after.trim() : after.substring(0, nextHeading).trim()
   return stripHtml(section)
 }
 
