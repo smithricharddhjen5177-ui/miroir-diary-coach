@@ -30,7 +30,7 @@ export async function OnThisDay({ today }: { today: string }) {
               )}
             </div>
             <p className="text-sm line-clamp-2 text-foreground/80">
-              {entry.state.occupyingThought ||
+              {entry.eveningReview.occupyingThought ||
                 entry.eveningReview.facts ||
                 entry.freeWriting?.slice(0, 100) ||
                 "（无内容）"}

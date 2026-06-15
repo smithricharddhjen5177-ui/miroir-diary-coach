@@ -110,7 +110,7 @@ export default async function MonthlyReviewPage({ params }: Props) {
                       {formatDateShort(entry.date)}
                     </span>
                     <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                      {entry.state.occupyingThought ||
+                      {entry.eveningReview.occupyingThought ||
                         entry.freeWriting?.slice(0, 60) ||
                         "（空）"}
                     </p>

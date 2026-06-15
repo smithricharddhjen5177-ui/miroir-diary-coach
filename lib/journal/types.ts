@@ -5,20 +5,22 @@ export interface JournalState {
   worthToday: string
 }
 
-export interface Priority {
-  text: string
-  done: boolean
-}
-
-export interface Task {
+export interface TodoItem {
   text: string
   done: boolean
 }
 
 export interface EveningReview {
+  // 今日状态（复盘时填写）
+  mood: string
+  body: string
+  occupyingThought: string
+  worthToday: string
+  // 最低复盘
   facts: string
   discoveries: string
   nextAction: string
+  // 有余力
   didWell: string
   thorn: string
   pattern: string
@@ -30,15 +32,11 @@ export interface TomorrowHandoff {
   maintenance: string
 }
 
-export interface Maintenance {
-  openPage: boolean
-  focusTime: boolean
-  reviewLine: boolean
-  outdoor: boolean
-  stretch: boolean
-  treat: boolean
-  aiPlan: boolean
-  aiReview: boolean
+export interface Habit {
+  key: string
+  label: string
+  done: boolean
+  category: "daily" | "bonus" | "ai"
 }
 
 export interface JournalEntry {
@@ -46,14 +44,12 @@ export interface JournalEntry {
   week: string
   month: string
   quarter: string
-  state: JournalState
-  priorities: Priority[]
-  tasks: Task[]
+  todos: TodoItem[]
   quickCapture: string[]
   freeWriting: string
   eveningReview: EveningReview
   tomorrowHandoff: TomorrowHandoff
-  maintenance: Maintenance
+  habits: Habit[]
   energy: number | null
   reading: string
   meditation: boolean
@@ -62,24 +58,18 @@ export interface JournalEntry {
   updatedAt?: string
 }
 
-export function emptyJournalEntry(date: string, week: string, month: string, quarter: string): JournalEntry {
+export function emptyJournalEntry(
+  date: string,
+  week: string,
+  month: string,
+  quarter: string
+): JournalEntry {
   return {
     date,
     week,
     month,
     quarter,
-    state: {
-      mood: "",
-      body: "",
-      occupyingThought: "",
-      worthToday: "",
-    },
-    priorities: [
-      { text: "", done: false },
-      { text: "", done: false },
-      { text: "", done: false },
-    ],
-    tasks: [
+    todos: [
       { text: "", done: false },
       { text: "", done: false },
       { text: "", done: false },
@@ -87,6 +77,10 @@ export function emptyJournalEntry(date: string, week: string, month: string, qua
     quickCapture: [],
     freeWriting: "",
     eveningReview: {
+      mood: "",
+      body: "",
+      occupyingThought: "",
+      worthToday: "",
       facts: "",
       discoveries: "",
       nextAction: "",
@@ -99,16 +93,16 @@ export function emptyJournalEntry(date: string, week: string, month: string, qua
       secondary: "",
       maintenance: "",
     },
-    maintenance: {
-      openPage: false,
-      focusTime: false,
-      reviewLine: false,
-      outdoor: false,
-      stretch: false,
-      treat: false,
-      aiPlan: false,
-      aiReview: false,
-    },
+    habits: [
+      { key: "open_page", label: "打开日记写 3 行", done: false, category: "daily" },
+      { key: "focus_time", label: "一段不聊天的专注时间", done: false, category: "daily" },
+      { key: "review_line", label: "留下一句晚间复盘", done: false, category: "daily" },
+      { key: "outdoor", label: "出门 / 散步 / 晒太阳", done: false, category: "bonus" },
+      { key: "stretch", label: "拉伸或活动身体", done: false, category: "bonus" },
+      { key: "treat", label: "吃一点让自己开心的东西", done: false, category: "bonus" },
+      { key: "ai_plan", label: "用 Miroir 拆计划", done: false, category: "ai" },
+      { key: "ai_review", label: "用 Miroir 做复盘", done: false, category: "ai" },
+    ],
     energy: null,
     reading: "",
     meditation: false,

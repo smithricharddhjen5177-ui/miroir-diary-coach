@@ -28,17 +28,20 @@ export function FreeWritingEditor({ content, onChange }: Props) {
       },
     },
     onUpdate: ({ editor }) => {
-      const html = editor.getHTML()
-      // Only emit if content actually changed (not on init)
-      onChange(html)
+      // Save as plain text (no HTML) for markdown compatibility
+      const text = editor.getText()
+      onChange(text)
     },
     immediatelyRender: false,
   })
 
   // Sync external content changes
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content || "")
+    if (editor) {
+      const currentText = editor.getText()
+      if (content !== currentText) {
+        editor.commands.setContent(content || "")
+      }
     }
   }, [content, editor])
 

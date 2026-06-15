@@ -1,8 +1,11 @@
 import matter from "gray-matter"
-import { JournalEntry, emptyJournalEntry, JournalState, Priority, Task, EveningReview, TomorrowHandoff, Maintenance } from "./types"
+import { JournalEntry, emptyJournalEntry, Habit } from "./types"
 import { getWeekString, getMonthString, getQuarterString } from "@/lib/utils/date"
 
-export function parseJournalMarkdown(raw: string, fallbackDate: string): JournalEntry {
+export function parseJournalMarkdown(
+  raw: string,
+  fallbackDate: string
+): JournalEntry {
   const { data, content } = matter(raw)
 
   const date = data.date || fallbackDate
@@ -12,30 +15,33 @@ export function parseJournalMarkdown(raw: string, fallbackDate: string): Journal
 
   const entry = emptyJournalEntry(date, week, month, quarter)
 
-  // Parse state
-  if (data.state) {
-    entry.state = {
-      mood: data.state.mood || "",
-      body: data.state.body || "",
-      occupyingThought: data.state.occupying_thought || "",
-      worthToday: data.state.worth_today || "",
+  // Parse todos (merged priorities + tasks)
+  if (Array.isArray(data.todos)) {
+    entry.todos = data.todos.map(
+      (t: { text?: string; done?: boolean }) => ({
+        text: t.text || "",
+        done: t.done || false,
+      })
+    )
+  } else {
+    // Backward compat: merge old priorities and tasks
+    const oldPriorities = Array.isArray(data.priorities)
+      ? data.priorities.map((p: { text?: string; done?: boolean }) => ({
+          text: p.text || "",
+          done: p.done || false,
+        }))
+      : []
+    const oldTasks = Array.isArray(data.tasks)
+      ? data.tasks.map((t: { text?: string; done?: boolean }) => ({
+          text: t.text || "",
+          done: t.done || false,
+        }))
+      : []
+    entry.todos = [...oldPriorities, ...oldTasks].filter((t) => t.text)
+    // Pad to 3 items
+    while (entry.todos.length < 3) {
+      entry.todos.push({ text: "", done: false })
     }
-  }
-
-  // Parse priorities
-  if (Array.isArray(data.priorities)) {
-    entry.priorities = data.priorities.map((p: { text?: string; done?: boolean }) => ({
-      text: p.text || "",
-      done: p.done || false,
-    }))
-  }
-
-  // Parse tasks
-  if (Array.isArray(data.tasks)) {
-    entry.tasks = data.tasks.map((t: { text?: string; done?: boolean }) => ({
-      text: t.text || "",
-      done: t.done || false,
-    }))
   }
 
   // Parse quick capture
@@ -43,32 +49,16 @@ export function parseJournalMarkdown(raw: string, fallbackDate: string): Journal
     entry.quickCapture = data.quick_capture
   }
 
-  // Parse free writing from content body
-  entry.freeWriting = content.trim()
-
-  // Parse maintenance
-  if (data.maintenance) {
-    entry.maintenance = {
-      openPage: data.maintenance.open_page || false,
-      focusTime: data.maintenance.focus_time || false,
-      reviewLine: data.maintenance.review_line || false,
-      outdoor: data.maintenance.outdoor || false,
-      stretch: data.maintenance.stretch || false,
-      treat: data.maintenance.treat || false,
-      aiPlan: data.maintenance.ai_plan || false,
-      aiReview: data.maintenance.ai_review || false,
-    }
-  }
-
-  // Scalar fields
-  entry.energy = data.energy ?? null
-  entry.reading = data.reading || ""
-  entry.meditation = data.meditation || false
-  entry.workout = data.workout || false
+  // Extract only the 自由书写 section from body (fix garbled text)
+  entry.freeWriting = extractFreeWriting(content)
 
   // Parse evening review from frontmatter
   if (data.review) {
     entry.eveningReview = {
+      mood: data.review.mood || "",
+      body: data.review.body || "",
+      occupyingThought: data.review.occupying_thought || "",
+      worthToday: data.review.worth_today || "",
       facts: data.review.facts || "",
       discoveries: data.review.discoveries || "",
       nextAction: data.review.next_action || "",
@@ -78,7 +68,7 @@ export function parseJournalMarkdown(raw: string, fallbackDate: string): Journal
     }
   }
 
-  // Parse tomorrow handoff from frontmatter
+  // Parse tomorrow handoff
   if (data.handoff) {
     entry.tomorrowHandoff = {
       primary: data.handoff.primary || "",
@@ -87,77 +77,72 @@ export function parseJournalMarkdown(raw: string, fallbackDate: string): Journal
     }
   }
 
+  // Parse habits (new format) or fall back to old maintenance
+  if (Array.isArray(data.habits)) {
+    entry.habits = data.habits.map(
+      (h: { key?: string; label?: string; done?: boolean; category?: string }) => ({
+        key: h.key || "",
+        label: h.label || "",
+        done: h.done || false,
+        category: (h.category === "bonus" || h.category === "ai" ? h.category : "daily") as "daily" | "bonus" | "ai",
+      })
+    )
+  } else if (data.maintenance) {
+    // Backward compat
+    const defaultHabits = emptyJournalEntry(date, week, month, quarter).habits
+    for (const habit of entry.habits) {
+      const oldKey = habit.key
+      if (oldKey in data.maintenance) {
+        habit.done = !!data.maintenance[oldKey]
+      }
+    }
+  }
+
+  // Scalar fields
+  entry.energy = data.energy ?? null
+  entry.reading = data.reading || ""
+  entry.meditation = data.meditation || false
+  entry.workout = data.workout || false
+
   return entry
 }
 
 /**
- * Parse the free writing content to extract evening review sections.
- * This handles the case where the review is written inline in the markdown body
- * rather than in frontmatter.
+ * Extract only the 自由书写 section from the markdown body.
+ * Before: entire body was used as freeWriting (causing duplicates and garbled HTML)
+ * Now: only content between "### 📕自由书写" and the next "###" heading.
  */
-export function parseBodySections(body: string): {
-  stateCheckin: string
-  freeWriting: string
-  eveningReview: { facts: string; discoveries: string; nextAction: string; didWell: string; thorn: string; pattern: string }
-  tomorrowHandoff: { primary: string; secondary: string; maintenance: string }
-} {
-  const sections = {
-    stateCheckin: "",
-    freeWriting: body,
-    eveningReview: { facts: "", discoveries: "", nextAction: "", didWell: "", thorn: "", pattern: "" },
-    tomorrowHandoff: { primary: "", secondary: "", maintenance: "" },
+function extractFreeWriting(body: string): string {
+  if (!body) return ""
+
+  // Find the free writing section
+  const startMarker = "### 📕自由书写"
+  const startIndex = body.indexOf(startMarker)
+  if (startIndex === -1) return body.trim() // fallback: whole body is free writing
+
+  const afterStart = body.substring(startIndex + startMarker.length)
+
+  // Find the next ### heading
+  const nextHeading = afterStart.search(/\n###\s/)
+  if (nextHeading === -1) {
+    // No next heading - rest is free writing
+    return afterStart.trim()
   }
 
-  // Extract 今日状态 section
-  const stateMatch = body.match(/###\s*今日状态\n([\s\S]*?)(?=###|$)/)
-  if (stateMatch) {
-    sections.stateCheckin = stateMatch[1].trim()
-  }
+  const section = afterStart.substring(0, nextHeading).trim()
+  // Strip HTML tags to get plain text
+  return stripHtml(section)
+}
 
-  // Extract 晚间复盘 section with subsections
-  const reviewMatch = body.match(/###\s*晚间复盘\n([\s\S]*?)(?=###\s*明日交接|$)/)
-  if (reviewMatch) {
-    const reviewText = reviewMatch[1]
-
-    const factsMatch = reviewText.match(/- 今天发生了什么[：:]\s*([^\n]*)/)
-    if (factsMatch) sections.eveningReview.facts = factsMatch[1].trim()
-
-    const discoMatch = reviewText.match(/- 我注意到什么[：:]\s*([^\n]*)/)
-    if (discoMatch) sections.eveningReview.discoveries = discoMatch[1].trim()
-
-    const actionMatch = reviewText.match(/- 明天我自己能做的一个小动作[：:]\s*([^\n]*)/)
-    if (actionMatch) sections.eveningReview.nextAction = actionMatch[1].trim()
-
-    const wellMatch = reviewText.match(/- 今天一个做得不错的地方[：:]\s*([^\n]*)/)
-    if (wellMatch) sections.eveningReview.didWell = wellMatch[1].trim()
-
-    const thornMatch = reviewText.match(/- 今天出现了什么[“"](.*?)[”"]或小提醒[：:]\s*([^\n]*)/)
-    if (thornMatch) sections.eveningReview.thorn = thornMatch[2].trim()
-
-    const patternMatch = reviewText.match(/- 这件事更深地指向了什么模式[：:]\s*([^\n]*)/)
-    if (patternMatch) sections.eveningReview.pattern = patternMatch[1].trim()
-  }
-
-  // Extract 明日交接 section
-  const handoffMatch = body.match(/###\s*明日交接\n([\s\S]*?)(?=---|$)/)
-  if (handoffMatch) {
-    const handoffText = handoffMatch[1]
-
-    const primaryMatch = handoffText.match(/- 明天最重要的 1 件事[：:]\s*([^\n]*)/)
-    if (primaryMatch) sections.tomorrowHandoff.primary = primaryMatch[1].trim()
-
-    const secondaryMatch = handoffText.match(/- 明天第二重要的 1 件事[：:]\s*([^\n]*)/)
-    if (secondaryMatch) sections.tomorrowHandoff.secondary = secondaryMatch[1].trim()
-
-    const maintMatch = handoffText.match(/- 明天维护秩序的 1 件小事[：:]\s*([^\n]*)/)
-    if (maintMatch) sections.tomorrowHandoff.maintenance = maintMatch[1].trim()
-  }
-
-  // Extract free writing (content before 晚间复盘)
-  const freeWritingMatch = body.match(/###\s*📕自由书写\n([\s\S]*?)(?=###\s*晚间复盘|$)/)
-  if (freeWritingMatch) {
-    sections.freeWriting = freeWritingMatch[1].trim()
-  }
-
-  return sections
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim()
 }

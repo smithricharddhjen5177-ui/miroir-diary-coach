@@ -69,7 +69,7 @@ export default async function WeeklyReviewPage({ params }: Props) {
                     </div>
                   </div>
                   <p className="text-sm text-muted-foreground line-clamp-2">
-                    {entry.state.occupyingThought ||
+                    {entry.eveningReview.occupyingThought ||
                       entry.eveningReview.discoveries ||
                       "（自由书写）"}
                   </p>
